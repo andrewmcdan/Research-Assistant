@@ -10,3 +10,5 @@ yarn-error.log*
 *.log
 *.swp
 *.swo
+package-lock.json
+yarn.lock
