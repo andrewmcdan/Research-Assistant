@@ -45,6 +45,24 @@ export interface SectionWriteRequest {
   supportingResearch: ResearchDocumentMetadata[];
 }
 
+export interface ChatMessageInput {
+  role: "assistant" | "user";
+  content: string;
+}
+
+export type SectionDraftStatus = "queued" | "in_progress" | "completed" | "failed";
+
+export interface SectionDraftJob {
+  id: string;
+  sessionId: string;
+  request: SectionWriteRequest;
+  status: SectionDraftStatus;
+  requestedAt: string;
+  updatedAt: string;
+  outputPath?: string;
+  error?: string;
+}
+
 export interface SessionState {
   id: string;
   topic?: string;

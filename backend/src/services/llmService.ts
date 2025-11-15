@@ -5,7 +5,8 @@ import {
   OutlineNode,
   ResearchQueryPlan,
   SectionWriteRequest,
-  UserScopeConfig
+  UserScopeConfig,
+  ChatMessageInput
 } from "../domain/types";
 import { logger } from "../config/logger";
 
@@ -22,16 +23,50 @@ export class LlmService {
 
   private async callModel(prompt: string): Promise<string> {
     if (!this.client) {
+      logger.debug("LLM mock response used", { preview: prompt.slice(0, 200) });
       return `MOCK_RESPONSE::${prompt.slice(0, 24)}`;
     }
 
-    const response = await this.client.responses.create({
+    logger.debug("LLM request", {
       model: env.MODEL_NAME,
-      input: prompt,
-      temperature: 0.2
+      prompt
     });
 
-    return response.output_text?.[0] ?? "";
+    const response = await this.client.responses.create({
+      model: env.MODEL_NAME,
+      input: [
+        {
+          role: "system",
+          content: [
+            {
+              type: "input_text",
+              text: "You are a JSON-only assistant. Respond with strictly valid JSON and no commentary."
+            }
+          ]
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: prompt
+            }
+          ]
+        }
+      ],
+      temperature: 1.0
+    });
+
+    const text = Array.isArray(response.output_text)
+      ? response.output_text.join("\n")
+      : response.output_text ?? "";
+    logger.debug("LLM response", {
+      model: env.MODEL_NAME,
+      raw: text
+    });
+    console.log("LLM response:", text);
+
+    return text;
   }
 
   async generateClarifyingQuestions(topic: string): Promise<ClarifyingQuestion[]> {
@@ -57,12 +92,23 @@ export class LlmService {
     }
 
     const raw = await this.callModel(
-      `Generate JSON with clarifying questions to scope a guide about ${topic}.`
+      [
+        `Topic: "${topic}".`,
+        "Generate clarifying questions to better define scope and depth.",
+        "Return a JSON array. Each entry must match:",
+        `{"id": string, "prompt": string, "type": "breadth"|"depth"|"toggle"|"open", "options"?: string[]}`,
+        "The entire response must be valid JSON with double quotes."
+      ].join("\n")
     );
     try {
-      return JSON.parse(raw) as ClarifyingQuestion[];
+      const parsed = JSON.parse(raw) as ClarifyingQuestion[];
+      logger.debug("Parsed clarifying questions", { count: parsed.length });
+      return parsed;
     } catch (error) {
-      logger.error("Failed to parse clarifying question response", { error });
+      logger.error("Failed to parse clarifying question response", {
+        error,
+        raw
+      });
       return [];
     }
   }
@@ -86,12 +132,22 @@ export class LlmService {
     }
 
     const raw = await this.callModel(
-      `Produce JSON array of {query,rationale,priority,expectedArtifacts[]} for ${scopeDescription}.`
+      [
+        `Scope description: ${scopeDescription}.`,
+        "Plan search queries and return JSON array where each element is:",
+        `{"query": string, "rationale": string, "priority": integer >= 1, "expectedArtifacts": ["article"|"paper"|"statistic"|"manual", ...]}`,
+        "Respond only with valid JSON."
+      ].join("\n")
     );
     try {
-      return JSON.parse(raw) as ResearchQueryPlan[];
+      const parsed = JSON.parse(raw) as ResearchQueryPlan[];
+      logger.debug("Parsed research plan", { count: parsed.length });
+      return parsed;
     } catch (error) {
-      logger.error("Failed to parse research plan response", { error });
+      logger.error("Failed to parse research plan response", {
+        error,
+        raw
+      });
       return [];
     }
   }
@@ -115,12 +171,22 @@ export class LlmService {
     }
 
     const raw = await this.callModel(
-      `Create JSON outline for topic ${topic}. Scope: ${JSON.stringify(scope)}`
+      [
+        `Create a hierarchical outline for topic "${topic}". Scope config JSON: ${JSON.stringify(scope)}.`,
+        "Return strictly valid JSON array of outline nodes.",
+        `Outline node schema: {"id": string, "title": string, "includeIf"?: string, "children"?: OutlineNode[]}`,
+        "Do not include explanations or markdown."
+      ].join("\n")
     );
     try {
-      return JSON.parse(raw) as OutlineNode[];
+      const parsed = JSON.parse(raw) as OutlineNode[];
+      logger.debug("Parsed outline", { topLevel: parsed.length });
+      return parsed;
     } catch (error) {
-      logger.error("Failed to parse outline response", { error });
+      logger.error("Failed to parse outline response", {
+        error,
+        raw
+      });
       return [];
     }
   }
@@ -144,5 +210,57 @@ ${citationList}
     ].join("\n");
 
     return this.callModel(prompt);
+  }
+
+  async deriveScopeFromConversation(
+    topic: string,
+    messages: ChatMessageInput[]
+  ): Promise<UserScopeConfig> {
+    if (!this.client) {
+      return {
+        topic,
+        depthLevel: "overview",
+        breadth: [],
+        optionalFlags: {}
+      };
+    }
+
+    const transcript = messages
+      .map((message) => `[${message.role}] ${message.content}`)
+      .join("\n");
+
+    const raw = await this.callModel(
+      [
+        `You are structuring scope information for a research assistant manual.`,
+        `Topic: "${topic}".`,
+        `Conversation transcript:\n${transcript}`,
+        `Return JSON exactly matching: {"topic": string, "depthLevel": "overview"|"intermediate"|"expert", "breadth": string[], "optionalFlags": Record<string, boolean>}`,
+        "Use double quotes and ensure breadth is a unique list.",
+        "Respond ONLY with JSON."
+      ].join("\n\n")
+    );
+
+    try {
+      const parsed = JSON.parse(raw) as UserScopeConfig;
+      if (!parsed.topic) {
+        parsed.topic = topic;
+      }
+      if (!parsed.optionalFlags) {
+        parsed.optionalFlags = {};
+      }
+      logger.debug("Parsed scope from conversation", {
+        depthLevel: parsed.depthLevel,
+        breadthCount: parsed.breadth.length
+      });
+      return parsed;
+    } catch (error) {
+      logger.error("Failed to parse scope summary", { error, raw });
+      return {
+        topic,
+        depthLevel: "overview",
+        breadth: [],
+        optionalFlags: {}
+      };
+    }
   }
 }

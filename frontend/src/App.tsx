@@ -1,10 +1,26 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
-import { createSession, fetchResearchPlan, setScope } from "./api/client";
-import type { ScopePayload, Session } from "./api/types";
+import {
+  captureResearch,
+  createSession,
+  deriveScopeFromChat,
+  fetchResearchPlan,
+  fetchSectionDrafts,
+  requestSectionDraft
+} from "./api/client";
+import type {
+  Session,
+  ResearchQueryPlan,
+  ResearchDocumentMetadata,
+  SectionDraftJob,
+  ChatMessageInput,
+  ClarifyingQuestion
+} from "./api/types";
 import { ChatMessageBubble } from "./components/ChatMessage";
 import type { ChatMessage } from "./components/ChatMessage";
-import { ScopeForm } from "./components/ScopeForm";
+import { ResearchCaptureForm } from "./components/ResearchCaptureForm";
+import { OutlinePanel } from "./components/OutlinePanel";
+import { DraftStatusPanel } from "./components/DraftStatusPanel";
 
 const makeId = () => crypto.randomUUID?.() ?? Math.random().toString(36).slice(2);
 const now = () => new Date().toISOString();
@@ -19,13 +35,53 @@ const initialMessages: ChatMessage[] = [
   }
 ];
 
+const serializeMessageForScope = (message: ChatMessage): ChatMessageInput => {
+  if (message.kind === "text") {
+    return {
+      role: message.role,
+      content: message.content
+    };
+  }
+  const planSummary =
+    message.summary ??
+    `Research plan with ${message.plan.length} queries for this topic.`;
+  const entries = message.plan
+    .map(
+      (item) =>
+        `${item.query} (priority ${item.priority}): ${item.rationale}. Expected artifacts: ${item.expectedArtifacts.join(", ")}`
+    )
+    .join("\n");
+  return {
+    role: message.role,
+    content: `${planSummary}\n${entries}`
+  };
+};
+
+const formatClarifyingQuestions = (questions: ClarifyingQuestion[]) => {
+  return questions
+    .map((question, index) => {
+      const base = `${index + 1}. ${question.prompt} (${question.type})`;
+      if (question.options?.length) {
+        return `${base}\n   Options: ${question.options.join(", ")}`;
+      }
+      return base;
+    })
+    .join("\n");
+};
+
 function App() {
   const [inputValue, setInputValue] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
   const [session, setSession] = useState<Session | null>(null);
+  const [latestPlan, setLatestPlan] = useState<ResearchQueryPlan[] | null>(null);
+  const [researchDocs, setResearchDocs] = useState<ResearchDocumentMetadata[]>([]);
+  const [draftJobs, setDraftJobs] = useState<SectionDraftJob[]>([]);
   const [isSending, setIsSending] = useState(false);
-  const [isSubmittingScope, setIsSubmittingScope] = useState(false);
+  const [isDerivingScope, setIsDerivingScope] = useState(false);
   const [isPlanning, setIsPlanning] = useState(false);
+  const [isCapturingResearch, setIsCapturingResearch] = useState(false);
+  const [isDraftingSection, setIsDraftingSection] = useState(false);
+  const [isRefreshingDrafts, setIsRefreshingDrafts] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const waitingForScope = Boolean(session && !session.scope);
@@ -58,6 +114,9 @@ function App() {
       if (!session) {
         const newSession = await createSession(trimmed);
         setSession(newSession);
+        setLatestPlan(null);
+        setResearchDocs([]);
+        setDraftJobs([]);
         addMessage({
           id: makeId(),
           role: "assistant",
@@ -70,27 +129,13 @@ function App() {
             id: makeId(),
             role: "assistant",
             kind: "text",
-            content: "Here are some clarifying questions—use the scope form below to answer them.",
+            content: [
+              "Here are clarifying questions to guide the scope:",
+              formatClarifyingQuestions(newSession.clarifyingQuestions)
+            ].join("\n\n"),
             timestamp: now()
           });
         }
-      } else if (!session.scope) {
-        addMessage({
-          id: makeId(),
-          role: "assistant",
-          kind: "text",
-          content: "I'm waiting for the scope form so I can plan research. Fill it out below.",
-          timestamp: now()
-        });
-      } else {
-        addMessage({
-          id: makeId(),
-          role: "assistant",
-          kind: "text",
-          content:
-            "Scope already locked. Use the Plan Research button to fetch queries or capture new instructions in the scope if needed.",
-          timestamp: now()
-        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Something went wrong";
@@ -107,29 +152,31 @@ function App() {
     }
   };
 
-  const handleScopeSubmit = async (payload: ScopePayload) => {
+  const handleDeriveScope = async () => {
     if (!session) {
       return;
     }
-    setIsSubmittingScope(true);
+    setIsDerivingScope(true);
     setError(null);
     try {
-      const updated = await setScope(session.id, payload);
+      const transcript = messages.map((message) => serializeMessageForScope(message));
+      const updated = await deriveScopeFromChat(session.id, transcript);
       setSession(updated);
+      setLatestPlan(null);
+      setResearchDocs([]);
+      setDraftJobs([]);
       addMessage({
         id: makeId(),
         role: "assistant",
         kind: "text",
-        content: `Perfect. I'll produce an outline for "${payload.topic}" at ${payload.depthLevel} depth covering ${
-          payload.breadth.length ? payload.breadth.join(", ") : "the focus areas you selected"
-        }. Whenever you're ready, ask me to plan research.`,
+        content: `Scope locked for "${updated.scope?.topic}". Depth set to ${updated.scope?.depthLevel}.`,
         timestamp: now()
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to save scope";
+      const message = err instanceof Error ? err.message : "Failed to derive scope";
       setError(message);
     } finally {
-      setIsSubmittingScope(false);
+      setIsDerivingScope(false);
     }
   };
 
@@ -142,6 +189,7 @@ function App() {
     setError(null);
     try {
       const plan = await fetchResearchPlan(session.id);
+      setLatestPlan(plan);
       addMessage({
         id: makeId(),
         role: "assistant",
@@ -158,11 +206,112 @@ function App() {
     }
   };
 
+  const handleCaptureResearch = async (payload: { plan: ResearchQueryPlan; url: string }) => {
+    if (!session) {
+      setError("Start a session before capturing research.");
+      return;
+    }
+    setIsCapturingResearch(true);
+    setError(null);
+
+    try {
+      const metadata = await captureResearch(session.id, payload);
+      setResearchDocs((prev) => [...prev, metadata]);
+      addMessage({
+        id: makeId(),
+        role: "assistant",
+        kind: "text",
+        content: `Captured research for "${payload.plan.query}" from ${metadata.url}.`,
+        timestamp: now()
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to capture research";
+      setError(message);
+    } finally {
+      setIsCapturingResearch(false);
+    }
+  };
+
+  const handleDraftSection = async (request: {
+    sectionId: string;
+    sectionTitle: string;
+    outlinePath: string[];
+    researchDocIds: string[];
+  }) => {
+    if (!session?.scope) {
+      setError("Scope and outline are required before drafting.");
+      return;
+    }
+
+    setIsDraftingSection(true);
+    setError(null);
+
+    try {
+      const supportingResearch = researchDocs.filter((doc) => request.researchDocIds.includes(doc.id));
+      const job = await requestSectionDraft(session.id, {
+        sectionId: request.sectionId,
+        sectionTitle: request.sectionTitle,
+        outlinePath: request.outlinePath,
+        supportingResearch
+      });
+      setDraftJobs((prev) => [job, ...prev.filter((item) => item.id !== job.id)]);
+      addMessage({
+        id: makeId(),
+        role: "assistant",
+        kind: "text",
+        content: `Queued drafting for "${request.sectionTitle}" using ${supportingResearch.length} research sources.`,
+        timestamp: now()
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not draft section";
+      setError(message);
+    } finally {
+      setIsDraftingSection(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!session) {
+      return;
+    }
+    let isMounted = true;
+    const poll = async () => {
+      try {
+        const jobs = await fetchSectionDrafts(session.id);
+        if (isMounted) {
+          setDraftJobs(jobs);
+        }
+      } catch (pollError) {
+        console.error("Failed to refresh draft jobs", pollError);
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [session?.id]);
+
+  const handleRefreshDrafts = async () => {
+    if (!session) {
+      return;
+    }
+    setIsRefreshingDrafts(true);
+    try {
+      const jobs = await fetchSectionDrafts(session.id);
+      setDraftJobs(jobs);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unable to refresh drafting queue";
+      setError(message);
+    } finally {
+      setIsRefreshingDrafts(false);
+    }
+  };
+
   const canSend = useMemo(() => {
-    if (!session) return inputValue.trim().length > 0 && !isSending;
-    if (waitingForScope) return false;
     return inputValue.trim().length > 0 && !isSending;
-  }, [inputValue, isSending, session, waitingForScope]);
+  }, [inputValue, isSending]);
 
   return (
     <div className="app-shell">
@@ -185,18 +334,24 @@ function App() {
             placeholder={
               session
                 ? waitingForScope
-                  ? "Fill the scope form to continue"
+                  ? "Answer the clarifying questions here"
                   : "Ask for more actions or context"
                 : "Describe the topic you need a guide for"
             }
             value={inputValue}
             onChange={(event) => setInputValue(event.target.value)}
-            disabled={waitingForScope}
           />
           <button onClick={handleSend} disabled={!canSend}>
             {isSending ? "Sending..." : session ? "Send" : "Start"}
           </button>
         </div>
+        {session && !session.scope && (
+          <div className="actions-bar">
+            <button className="primary" onClick={handleDeriveScope} disabled={isDerivingScope}>
+              {isDerivingScope ? "Deriving..." : "Derive Scope from Chat"}
+            </button>
+          </div>
+        )}
         {session?.scope && (
           <div className="actions-bar">
             <button className="primary" onClick={handlePlanResearch} disabled={isPlanning}>
@@ -205,13 +360,25 @@ function App() {
           </div>
         )}
       </section>
-      {waitingForScope && session && (
-        <ScopeForm
-          defaultTopic={session.topic ?? ""}
-          questions={session.clarifyingQuestions}
-          onSubmit={handleScopeSubmit}
-          isSubmitting={isSubmittingScope}
-        />
+      {session?.scope && (
+        <div className="workspace-grid">
+          <ResearchCaptureForm
+            planOptions={latestPlan}
+            onCapture={handleCaptureResearch}
+            isCapturing={isCapturingResearch}
+          />
+          <OutlinePanel
+            outline={session.outline}
+            researchDocs={researchDocs}
+            onDraft={handleDraftSection}
+            isDrafting={isDraftingSection}
+          />
+          <DraftStatusPanel
+            jobs={draftJobs}
+            onRefresh={handleRefreshDrafts}
+            isRefreshing={isRefreshingDrafts}
+          />
+        </div>
       )}
     </div>
   );

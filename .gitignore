@@ -4,3 +4,8 @@ backend/dist/
 backend/.env
 data/logs/*.log
 *.DS_Store
+documents/
+research/
+outlines/
+.vscode/
+logs/

@@ -12,9 +12,22 @@ Backend-focused scaffold that turns the **High Level Vision** document into a ru
 
 ## Getting Started
 
+### Quick launch
+
+From the repo root you can spin up both backend and frontend dev servers with:
+
+```bash
+./launch.sh
+```
+
+The script installs dependencies (if needed), starts the backend on `4000`, the Vite frontend on `5173`, and tears both down when you hit `Ctrl+C`.
+
+### Manual setup
+
 ```bash
 cd backend
 cp .env.example .env   # add OPENAI_API_KEY when ready to call GPT
+# adjust LOG_LEVEL and CORS_ORIGIN (comma-separated list) if needed
 npm install
 npm run dev
 ```
@@ -31,6 +44,14 @@ npm run dev
 ```
 
 The Vite dev server runs on `5173` and proxies directly to the backend API URL from the env file.
+
+Chat capabilities:
+
+- Kick off a session by describing the desired manual in the chat composer.
+- Answer the clarifying questions in chat, then click *Derive Scope from Chat* to let the LLM structure breadth/depth and flags automatically.
+- Ask for a research plan, then capture specific URLs via the research panel (mirrors the Puppeteer workflow in the high-level vision).
+- View the generated outline tree, select captured research sources, and queue section drafting tasks directly from the UI.
+- Observe writing job statuses (queued, in-progress, complete/failed) and their output paths from the Writing Queue panel.
 
 ## Core Concepts
 

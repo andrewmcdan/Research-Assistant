@@ -24,8 +24,17 @@ export const createWritingRouter = (workflow: SessionWorkflow) => {
   router.post("/:sessionId/sections", async (req, res, next) => {
     try {
       const payload = writeSectionSchema.parse(req.body);
-      await workflow.writeSectionFromSession(req.params.sessionId, payload);
-      res.status(202).json({ status: "queued" });
+      const job = await workflow.queueSectionDraft(req.params.sessionId, payload);
+      res.status(202).json(job);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.get("/:sessionId/sections", (req, res, next) => {
+    try {
+      const jobs = workflow.listSectionDrafts(req.params.sessionId);
+      res.json(jobs);
     } catch (error) {
       next(error);
     }

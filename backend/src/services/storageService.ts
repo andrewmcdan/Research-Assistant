@@ -31,13 +31,14 @@ export class StorageService {
     await writeJson(path.join(paths.documentsDir, "sessions"), filename, session);
   }
 
-  async writeSection(pathSegments: string[], content: string): Promise<void> {
+  async writeSection(pathSegments: string[], content: string): Promise<string> {
     const filename = pathSegments.pop();
     if (!filename) {
       throw new Error("Invalid section path");
     }
     const dir = path.join(paths.documentsDir, ...pathSegments);
     await writeMarkdown(dir, `${filename}.md`, content);
+    return path.join(dir, `${filename}.md`);
   }
 
   async writeCombinedDocument(name: string, content: string): Promise<void> {

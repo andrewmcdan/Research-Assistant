@@ -1,4 +1,10 @@
-import type { Session, ScopePayload, ResearchQueryPlan } from "./types";
+import type {
+  Session,
+  ResearchQueryPlan,
+  ResearchDocumentMetadata,
+  SectionDraftJob,
+  ChatMessageInput
+} from "./types";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 
@@ -27,13 +33,38 @@ export const createSession = (topic: string) =>
     body: JSON.stringify({ topic })
   });
 
-export const setScope = (sessionId: string, payload: ScopePayload) =>
-  request<Session>(`/sessions/${sessionId}/scope`, {
+export const deriveScopeFromChat = (sessionId: string, messages: ChatMessageInput[]) =>
+  request<Session>(`/sessions/${sessionId}/scope/from-chat`, {
     method: "POST",
-    body: JSON.stringify(payload)
+    body: JSON.stringify({ messages })
   });
 
 export const fetchResearchPlan = (sessionId: string) =>
   request<ResearchQueryPlan[]>(`/sessions/${sessionId}/research-plan`, {
+    method: "GET"
+  });
+
+export const captureResearch = (sessionId: string, payload: { url: string; plan: ResearchQueryPlan }) =>
+  request<ResearchDocumentMetadata>(`/sessions/${sessionId}/research`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+export const requestSectionDraft = (
+  sessionId: string,
+  payload: {
+    sectionId: string;
+    sectionTitle: string;
+    outlinePath: string[];
+    supportingResearch: ResearchDocumentMetadata[];
+  }
+) =>
+  request<SectionDraftJob>(`/sessions/${sessionId}/sections`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+
+export const fetchSectionDrafts = (sessionId: string) =>
+  request<SectionDraftJob[]>(`/sessions/${sessionId}/sections`, {
     method: "GET"
   });

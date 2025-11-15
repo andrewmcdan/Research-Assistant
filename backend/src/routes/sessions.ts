@@ -13,6 +13,17 @@ const scopeSchema = z.object({
   optionalFlags: z.record(z.string(), z.boolean()).default({})
 });
 
+const transcriptSchema = z.object({
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["assistant", "user"]),
+        content: z.string().min(1)
+      })
+    )
+    .min(1)
+});
+
 export const createSessionRouter = (workflow: SessionWorkflow) => {
   const router = Router();
 
@@ -30,6 +41,16 @@ export const createSessionRouter = (workflow: SessionWorkflow) => {
     try {
       const scope = scopeSchema.parse(req.body);
       const session = await workflow.setScope(req.params.sessionId, scope);
+      res.json(session);
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post("/:sessionId/scope/from-chat", async (req, res, next) => {
+    try {
+      const { messages } = transcriptSchema.parse(req.body);
+      const session = await workflow.deriveScopeFromConversation(req.params.sessionId, messages);
       res.json(session);
     } catch (error) {
       next(error);

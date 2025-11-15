@@ -38,9 +38,35 @@ export interface ResearchQueryPlan {
   expectedArtifacts: ("article" | "paper" | "statistic" | "manual")[];
 }
 
-export interface ScopePayload {
-  topic: string;
-  depthLevel: DepthLevel;
-  breadth: string[];
-  optionalFlags: Record<string, boolean>;
+export interface ResearchDocumentMetadata {
+  id: string;
+  url: string;
+  sourceQuery: string;
+  capturedAt: string;
+  tags: string[];
+  storagePath: string;
+}
+
+export interface ChatMessageInput {
+  role: "assistant" | "user";
+  content: string;
+}
+
+export type SectionDraftStatus = "queued" | "in_progress" | "completed" | "failed";
+
+export interface SectionDraftJob {
+  id: string;
+  sessionId: string;
+  request: {
+    sectionId: string;
+    sectionTitle: string;
+    outlinePath: string[];
+    scope: UserScopeConfig;
+    supportingResearch: ResearchDocumentMetadata[];
+  };
+  status: SectionDraftStatus;
+  requestedAt: string;
+  updatedAt: string;
+  outputPath?: string;
+  error?: string;
 }

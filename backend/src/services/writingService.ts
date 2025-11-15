@@ -8,9 +8,9 @@ export class WritingService {
     private readonly storage: StorageService
   ) {}
 
-  async writeSection(request: SectionWriteRequest): Promise<void> {
+  async writeSection(request: SectionWriteRequest): Promise<string> {
     const content = await this.llm.writeSection(request);
     const filePath = [...request.outlinePath, request.sectionId];
-    await this.storage.writeSection(filePath, content);
+    return this.storage.writeSection(filePath, content);
   }
 }

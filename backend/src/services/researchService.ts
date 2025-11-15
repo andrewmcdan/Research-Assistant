@@ -17,7 +17,12 @@ export class ResearchService {
     const scopeDescription = session.scope
       ? `${session.scope.topic} with depth ${session.scope.depthLevel}`
       : session.id;
-    return this.llm.planResearchQueries(scopeDescription);
+    const plan = await this.llm.planResearchQueries(scopeDescription);
+    logger.info("Generated research plan", {
+      sessionId: session.id,
+      totalQueries: plan.length
+    });
+    return plan;
   }
 
   private async getBrowser(): Promise<Browser> {

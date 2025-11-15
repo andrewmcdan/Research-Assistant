@@ -9,6 +9,7 @@ import { ResearchService } from "./services/researchService";
 import { WritingService } from "./services/writingService";
 import { SessionWorkflow } from "./workflows/sessionWorkflow";
 import { ensureDir } from "./utils/fileSystem";
+import { SectionDraftService } from "./services/sectionDraftService";
 
 const bootstrap = async () => {
   await Promise.all(
@@ -23,18 +24,28 @@ const bootstrap = async () => {
   const sessionService = new SessionService();
   const researchService = new ResearchService(llmService, storageService);
   const writingService = new WritingService(llmService, storageService);
+  const sectionDraftService = new SectionDraftService(writingService);
   const workflow = new SessionWorkflow(
     sessionService,
     planningService,
     researchService,
-    writingService,
-    storageService
+    storageService,
+    sectionDraftService
   );
 
   const app = createApp(workflow);
 
-  app.listen(env.PORT, () => {
+  const server = app.listen(env.PORT, () => {
     logger.info(`Server listening on port ${env.PORT}`);
+  });
+
+  server.on("error", (error) => {
+    logger.error("HTTP server error", { error });
+    process.exit(1);
+  });
+
+  await new Promise<void>((resolve) => {
+    server.on("close", resolve);
   });
 };
 
